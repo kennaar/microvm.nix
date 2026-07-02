@@ -1,6 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
+  inherit (import ../../../lib { inherit lib; }) shareSourceWord shareSourceCheck;
+
   virtiofsShares = builtins.filter ({ proto, ... }:
     proto == "virtiofs"
   ) config.microvm.shares;
@@ -31,7 +33,7 @@ in
             events = "PROCESS_STATE";
           };
         } // builtins.listToAttrs (
-          map ({ tag, socket, source, readOnly, cache, ... }: {
+          map ({ tag, socket, source, readOnly, cache, ... }@share: {
             name = "program:virtiofsd-${tag}";
             value = {
               stderr_syslog = true;
@@ -42,12 +44,13 @@ in
                 else
                   OPT_RLIMIT=""
                 fi
+                ${shareSourceCheck share}
                 exec ${lib.getExe config.microvm.virtiofsd.package} \
                   --socket-path=${lib.escapeShellArg socket} \
                   ${lib.optionalString (config.microvm.virtiofsd.group != null)
                   "--socket-group=${config.microvm.virtiofsd.group}"
                   } \
-                  --shared-dir=${lib.escapeShellArg source} \
+                  --shared-dir=${shareSourceWord {} share} \
                   $OPT_RLIMIT \
                   --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
                   --posix-acl --xattr \

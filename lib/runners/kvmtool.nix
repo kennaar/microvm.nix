@@ -1,5 +1,6 @@
 { pkgs
 , microvmConfig
+, shareSourceWord
 , linuxTarget
 , ...
 }:
@@ -63,12 +64,12 @@ in {
         ]
       ) volumes
       ++
-      builtins.concatMap ({ proto, source, tag, readOnly, ... }:
+      builtins.concatMap ({ proto, source, tag, readOnly, ... }@share:
         if proto == "9p"
         then if readOnly then
           throw "kvmtool does not support readonly 9p share"
         else [
-          "--9p" (lib.escapeShellArg "${source},${tag}")
+          "--9p" (shareSourceWord { suffix = ",${tag}"; } share)
         ] else throw "virtiofs shares not implemented for kvmtool"
       ) shares
       ++

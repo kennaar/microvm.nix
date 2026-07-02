@@ -2,6 +2,7 @@
 , microvmConfig
 , macvtapFds
 , withDriveLetters
+, shareSourceWord
 , linuxTarget
 , ...
 }:
@@ -123,6 +124,23 @@ let
     else [
       (builtins.head xs // { index = n; })
     ] ++ (enumerate (n + 1) (builtins.tail xs));
+
+  # Pre-escaped shell fragments for all 9p shares.
+  # Emitted outside lib.escapeShellArgs so the double-quoted source string is
+  # interpreted by the shell at runtime, enabling $VAR expansion in source paths.
+  all9pShareArgs = lib.concatStringsSep " " (
+    builtins.concatMap ({ proto, index, tag, securityModel, readOnly, ... }@share:
+      lib.optionals (proto == "9p") [
+        (lib.escapeShellArg "-fsdev" + " " +
+         shareSourceWord {
+           prefix = "local,id=fs${toString index},path=";
+           suffix = ",security_model=${securityModel},readonly=${lib.boolToString readOnly}";
+         } share +
+         " " + lib.escapeShellArg "-device" + " " +
+         lib.escapeShellArg "virtio-9p-${devType},fsdev=fs${toString index},mount_tag=${tag}")
+      ]
+    ) (enumerate 0 shares)
+  );
 
   canSandbox =
     # Don't let qemu sandbox itself if it is going to call qemu-bridge-helper
@@ -282,15 +300,12 @@ lib.warnIf (mem == 2048) ''
         "-numa" "node,memdev=mem"
         "-object" "memory-backend-memfd,id=mem,size=${toString mem}M,share=on"
       ]) ++
-      builtins.concatMap ({ proto, index, socket, source, tag, securityModel, readOnly, ... }: {
+      builtins.concatMap ({ proto, index, socket, tag, ... }: {
         "virtiofs" = [
           "-chardev" "socket,id=fs${toString index},path=${socket}"
           "-device" "vhost-user-fs-${devType},chardev=fs${toString index},tag=${tag}"
         ];
-        "9p" = [
-          "-fsdev" "local,id=fs${toString index},path=${source},security_model=${securityModel},readonly=${lib.boolToString readOnly}"
-          "-device" "virtio-9p-${devType},fsdev=fs${toString index},mount_tag=${tag}"
-        ];
+        "9p" = [];  # handled outside escapeShellArgs (see all9pShareArgs)
       }.${proto}) (enumerate 0 shares)
     )
     ++
@@ -354,7 +369,8 @@ lib.warnIf (mem == 2048) ''
     ]
     ++
     extraArgs
-  );
+  )
+  + lib.optionalString (all9pShareArgs != "") (" " + all9pShareArgs);
 
   canShutdown = socket != null;
 

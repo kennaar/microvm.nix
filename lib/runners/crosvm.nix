@@ -1,6 +1,7 @@
 { pkgs
 , microvmConfig
 , macvtapFds
+, shareSourceWord
 , linuxTarget
 , ...
 }:
@@ -15,6 +16,22 @@ let
   inherit (microvmConfig.crosvm) pivotRoot extraArgs;
 
   crosvmPkg = microvmConfig.crosvm.package;
+
+  # Pre-escaped shell fragments for all 9p shares.
+  # Emitted outside lib.escapeShellArgs so the double-quoted source string is
+  # interpreted by the shell at runtime, enabling $VAR expansion in source paths.
+  all9pShareArgs = lib.concatStringsSep " " (
+    builtins.concatMap ({ proto, tag, readOnly, ... }@share:
+      lib.optionals (proto == "9p") (
+        if readOnly
+        then throw "Readonly 9p share is not supported"
+        else [
+          (lib.escapeShellArg "--shared-dir" + " " +
+           shareSourceWord { suffix = ":${tag}:type=p9"; } share)
+        ]
+      )
+    ) shares
+  );
 
   kernelPath = {
     x86_64-linux = "${kernel.dev}/vmlinux";
@@ -98,15 +115,11 @@ in {
         ]
       ) volumes
       ++
-      builtins.concatMap ({ proto, tag, source, socket, readOnly, ... }: {
+      builtins.concatMap ({ proto, socket, ... }: {
         "virtiofs" = [
           "--vhost-user" "type=fs,socket=${socket}"
         ];
-        "9p" = if readOnly then
-          throw "Readonly 9p share is not supported"
-        else [
-          "--shared-dir" "${source}:${tag}:type=p9"
-        ];
+        "9p" = [];  # handled outside escapeShellArgs (see all9pShareArgs)
       }.${proto}) shares
       ++
       (builtins.concatMap ({ id, type, mac, ... }: [
@@ -142,7 +155,8 @@ in {
         pci = [ "--vfio" "/sys/bus/pci/devices/${path},iommu=viommu" ];
         usb = throw "USB passthrough is not supported on crosvm";
       }.${bus}) devices)
-    + " " + lib.escapeShellArgs extraArgs;
+    + " " + lib.escapeShellArgs extraArgs
+    + lib.optionalString (all9pShareArgs != "") (" " + all9pShareArgs);
 
   canShutdown = socket != null;
 

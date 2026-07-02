@@ -1,6 +1,7 @@
 { pkgs
 , microvmConfig
 , withDriveLetters
+, shareSourceWord
 , linuxTarget
 , ...
 }:
@@ -20,6 +21,18 @@ let
   inherit (microvmConfig.vfkit) extraArgs logLevel rosetta;
 
   volumesWithLetters = withDriveLetters microvmConfig;
+
+  # Pre-escaped shell fragments for all virtiofs shares.
+  # Emitted outside lib.escapeShellArgs so the double-quoted source string is
+  # interpreted by the shell at runtime, enabling $VAR expansion in source paths.
+  allVirtiofsArgsRaw = lib.concatStringsSep " " (
+    builtins.concatMap ({ proto, tag, ... }@share:
+      lib.optionals (proto == "virtiofs") [
+        (lib.escapeShellArg "--device" + " " +
+         shareSourceWord { prefix = "virtio-fs,sharedDir="; suffix = ",mountTag=${tag}"; } share)
+      ]
+    ) shares
+  );
 
   # vfkit requires uncompressed kernel
   kernelPath = "${kernel.out}/${linuxTarget}";
@@ -50,12 +63,10 @@ let
     ++ (builtins.concatMap ({ image, ... }: [
       "--device" "virtio-blk,path=${image}"
     ]) volumesWithLetters)
-    ++ (builtins.concatMap ({ proto, source, tag, ... }:
-      if proto == "virtiofs" then [
-        "--device" "virtio-fs,sharedDir=${source},mountTag=${tag}"
-      ]
-      else
-        throw "vfkit does not support ${proto} share. Use proto = \"virtiofs\" instead."
+    ++ (builtins.concatMap ({ proto, ... }:
+      if proto != "virtiofs"
+      then throw "vfkit does not support ${proto} share. Use proto = \"virtiofs\" instead."
+      else []  # handled outside escapeShellArgs (see allVirtiofsArgsRaw)
     ) shares)
     ++ (builtins.concatMap ({ type, id, mac, ... }:
       if type == "user" then [
@@ -119,8 +130,10 @@ in
     then throw "vfkit vsock support not yet implemented in microvm.nix"
     else
       let
-        baseCmd = lib.escapeShellArgs allArgsWithoutSocket;
-        vfkitCmd = lib.concatStringsSep " " (map lib.escapeShellArg allArgsWithoutSocket);
+        baseCmd = lib.escapeShellArgs allArgsWithoutSocket
+          + lib.optionalString (allVirtiofsArgsRaw != "") (" " + allVirtiofsArgsRaw);
+        vfkitCmd = lib.concatStringsSep " " (map lib.escapeShellArg allArgsWithoutSocket)
+          + lib.optionalString (allVirtiofsArgsRaw != "") (" " + allVirtiofsArgsRaw);
       in
       # vfkit requires absolute socket paths, so expand relative paths
       if socket != null

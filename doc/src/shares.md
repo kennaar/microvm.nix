@@ -42,6 +42,44 @@ have options
 </div>
 
 
+## Runtime-expanded share sources
+
+The `source` value is always passed to the shell in a double-quote context, so
+`$VAR`, `${VAR:-default}`, and `$(...)` are expanded at runtime:
+
+```nix
+microvm.shares = [ {
+  proto = "9p";
+  tag = "config";
+  source = "${MYAPP_CONFIG_DIR:-$HOME/.config/myapp}";
+  mountPoint = "/config";
+} ];
+```
+
+The expanded value is treated as a single shell word, so paths containing
+spaces (e.g. `HOME=/Users/John Doe`) are safe.
+
+**Which environment expands the value** depends on the share protocol:
+
+- **9p and vfkit virtiofs**: the process that runs `microvm-run` — typically
+  the user who runs `nix run`.
+- **virtiofs (Linux, host module)**: the `microvm-virtiofsd@` systemd service,
+  which runs in a minimal environment. Use `preStart` to export variables
+  that the service needs, or prefer 9p for user-specific paths.
+
+**Caveats:**
+
+- Tilde `~` does not expand inside double quotes; use `$HOME` instead.
+- Unset variables abort the script when `set -u` is active; write
+  `${VAR:-}` for optional variables.
+- The host module cannot auto-create a directory whose path contains `$`.
+  Ensure the directory exists before starting the VM —
+  for example via `microvm.preStart`.
+- Paths containing literal **commas** break qemu and kvmtool 9p option
+  parsing. Paths containing literal **colons** break crosvm 9p.
+- `$(...)` command substitutions are evaluated twice: once in the pre-start
+  guard check and once in the final `exec`. This is safe for typical use.
+
 ## Sharing a host's `/nix/store`
 
 If a share with `source = "/nix/store"` is defined, size and build

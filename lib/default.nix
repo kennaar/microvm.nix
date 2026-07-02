@@ -113,4 +113,27 @@ rec {
     if opts == "" || opts == null then null
     else let m = builtins.match ".*${param}=([^,]+).*" opts;
          in if m == null then null else builtins.head m;
+
+  # Escape a string for use inside a shell double-quoted context.
+  # Neutralises \, ", and ` but leaves $ live so the shell expands it at runtime.
+  escapeShellArgExpandable = s:
+    "\"" + lib.replaceStrings [ "\\" "\"" "`" ] [ "\\\\" "\\\"" "\\`" ] s + "\"";
+
+  # Build a safely-quoted shell word for a share's source path.
+  # The source is wrapped in double quotes so $VAR / ''${VAR:-default} expand at
+  # runtime; spaces in expanded paths are safe because the whole word stays quoted.
+  shareSourceWord = { prefix ? "", suffix ? "" }: share:
+    lib.optionalString (prefix != "") (lib.escapeShellArg prefix)
+    + escapeShellArgExpandable share.source
+    + lib.optionalString (suffix != "") (lib.escapeShellArg suffix);
+
+  # Emit a shell snippet that aborts with a clear error if the source path
+  # (after runtime expansion) is not an existing directory.
+  shareSourceCheck = share: ''
+    if [ ! -d ${escapeShellArgExpandable share.source} ]; then
+      echo "microvm: share '${share.tag}': source ${lib.escapeShellArg share.source} expanded to" \
+        ${escapeShellArgExpandable share.source} "which is not an existing directory" >&2
+      exit 1
+    fi
+  '';
 }

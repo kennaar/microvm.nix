@@ -8,7 +8,7 @@ let
 
   inherit (microvmConfig) hostName vmHostPackages;
 
-  inherit (import ./. { inherit lib; }) makeMacvtap withDriveLetters extractOptValues extractParamValue;
+  inherit (import ./. { inherit lib; }) makeMacvtap withDriveLetters extractOptValues extractParamValue escapeShellArgExpandable shareSourceWord shareSourceCheck;
   inherit (import ./volumes.nix { pkgs = microvmConfig.vmHostPackages; }) createVolumesScript;
   inherit (makeMacvtap {
     inherit microvmConfig hypervisorConfig;
@@ -17,7 +17,7 @@ let
   linuxTarget = pkgs.linux.target or pkgs.stdenv.hostPlatform.linux-kernel.target;
 
   hypervisorConfig = import (./runners + "/${microvmConfig.hypervisor}.nix") {
-    inherit pkgs microvmConfig macvtapFds withDriveLetters extractOptValues extractParamValue linuxTarget;
+    inherit pkgs microvmConfig macvtapFds withDriveLetters extractOptValues extractParamValue shareSourceWord linuxTarget;
   };
 
   inherit (hypervisorConfig) command canShutdown shutdownCommand;
@@ -176,6 +176,10 @@ let
         ${preStart}
         ${createVolumesScript microvmConfig.volumes}
         ${lib.optionalString (hypervisorConfig.requiresMacvtapAsFds or false) openMacvtapFds}
+        ${lib.concatMapStrings (share:
+          let needsGuard = (share.proto == "9p") || (microvmConfig.hypervisor == "vfkit");
+          in lib.optionalString needsGuard (shareSourceCheck share)
+        ) microvmConfig.shares}
         runtime_args=${
           lib.optionalString (microvmConfig.extraArgsScript != null) ''
             $(${microvmConfig.extraArgsScript})
@@ -259,8 +263,8 @@ vmHostPackages.buildPackages.runCommand "microvm-${microvmConfig.hypervisor}-${h
   ${lib.concatMapStrings ({ tag, socket, source, proto, ... }:
       lib.optionalString (proto == "virtiofs") ''
         mkdir -p $out/share/microvm/virtiofs/${tag}
-        echo "${socket}" > $out/share/microvm/virtiofs/${tag}/socket
-        echo "${source}" > $out/share/microvm/virtiofs/${tag}/source
+        echo ${lib.escapeShellArg socket} > $out/share/microvm/virtiofs/${tag}/socket
+        echo ${lib.escapeShellArg source} > $out/share/microvm/virtiofs/${tag}/source
       ''
     ) microvmConfig.shares}
 

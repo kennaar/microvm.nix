@@ -55,7 +55,7 @@ in
             builtins.foldl' (
               result: share:
               result
-              // lib.optionalAttrs (share.source != "/nix/store") {
+              // lib.optionalAttrs (share.source != "/nix/store" && !(lib.strings.hasInfix "$" share.source)) {
                 "${share.source}".d = {
                   # Only adjust permissions if directory doesn't exist
                   user = ":${user}";
